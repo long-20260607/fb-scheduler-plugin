@@ -148,38 +148,31 @@ async function loadActiveStatus() {
 async function activate() {
     const codeInput = document.getElementById('codeInput');
     const code = codeInput.value.trim();
-    
+
     if (!code) {
         showMessage('请输入激活码', 'error');
         return;
     }
-    
+
     setLoading(true);
-    
+
     try {
         const fingerId = generateFingerprint();
-        
-        // 直接调用激活 API
-        const data = await callActivationAPI('/app/plugin/active', fingerId, code);
-        
-        if (data.status === true) {
-            // 保存激活信息
-            const activeInfo = {
-                isActive: true,
-                fingerId: fingerId,
-                code: code,
-                expireTime: data.data || null
-            };
-            await chrome.storage.local.set({ activeInfo: activeInfo });
-            
-            showMessage(data.msg || '激活成功', 'success');
-            // 重新加载状态
-            setTimeout(() => {
-                loadActiveStatus();
-            }, 500);
-        } else {
-            showMessage(data.msg || '激活失败', 'error');
-        }
+
+        // 本地激活（跳过API验证）
+        const activeInfo = {
+            isActive: true,
+            fingerId: fingerId,
+            code: code,
+            expireTime: '2099-12-31'
+        };
+        await chrome.storage.local.set({ activeInfo: activeInfo });
+
+        showMessage('激活成功', 'success');
+        // 重新加载状态
+        setTimeout(() => {
+            loadActiveStatus();
+        }, 500);
     } catch (error) {
         console.error('激活失败:', error);
         showMessage('激活失败: ' + error.message, 'error');
@@ -231,32 +224,19 @@ async function cancelActive() {
     }
 }
 
-// 获取激活状态（通过 API 检测）
+// 获取激活状态（本地检查，跳过API）
 async function getActivationStatus() {
     try {
-        // 从 storage 获取激活信息（用于获取 code）
+        // 从 storage 获取激活信息
         const result = await chrome.storage.local.get(['activeInfo']);
         const activeInfo = result.activeInfo;
-        
+
         if (!activeInfo || !activeInfo.isActive || !activeInfo.code) {
             return { isActive: false };
         }
-        
-        // 发送请求检测激活状态
-        const data = await callActivationAPI('/app/plugin/checkTime', activeInfo.fingerId, activeInfo.code);
-        
-        if (data.status === true) {
-            // 激活有效，更新过期时间（如果有）
-            if (data.data) {
-                activeInfo.expireTime = data.data;
-                await chrome.storage.local.set({ activeInfo: activeInfo });
-            }
-            return { isActive: true, activeInfo: activeInfo };
-        } else {
-            // 激活无效或已过期，清除激活信息
-            await chrome.storage.local.remove('activeInfo');
-            return { isActive: false };
-        }
+
+        // 本地验证：只要 storage 中有激活信息就认为已激活
+        return { isActive: true, activeInfo: activeInfo };
     } catch (error) {
         console.error('获取激活状态失败:', error);
         return { isActive: false };
