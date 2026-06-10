@@ -1,8 +1,8 @@
 // popup.js - Popup 激活界面逻辑
 
 // 激活 API 基础 URL（需要根据实际情况修改）
-const ACTIVATION_API_BASE = 'http://localhost:3000'; // TODO: 替换为实际的 API 地址
-// const ACTIVATION_API_BASE = 'https://www.xm2013.com'; // TODO: 替换为实际的 API 地址
+// const ACTIVATION_API_BASE = 'http://localhost:3000';
+const ACTIVATION_API_BASE = 'https://hizynzkovnnugjedqpuw.supabase.co/functions/v1';
 
 // 调用激活 API
 async function callActivationAPI(endpoint, fingerId, code) {
@@ -165,7 +165,7 @@ async function activate() {
         const fingerId = generateFingerprint();
 
         // 直接调用激活 API
-        const data = await callActivationAPI('/api/plugin/active', fingerId, code);
+        const data = await callActivationAPI('/plugin-active', fingerId, code);
 
         if (data.status === true) {
             // 保存激活信息
@@ -214,7 +214,7 @@ async function cancelActive() {
         const fingerId = generateFingerprint();
 
         // 直接调用取消激活 API
-        const data = await callActivationAPI('/api/plugin/unactive', fingerId, activeInfo.code);
+        const data = await callActivationAPI('/plugin-unactive', fingerId, activeInfo.code);
 
         if (data.status === true) {
             // 清除激活信息
@@ -248,7 +248,7 @@ async function getActivationStatus() {
         }
 
         // 发送请求检测激活状态
-        const data = await callActivationAPI('/api/plugin/checkTime', activeInfo.fingerId, activeInfo.code);
+        const data = await callActivationAPI('/plugin-check-time', activeInfo.fingerId, activeInfo.code);
 
         if (data.status === true) {
             // 激活有效，更新过期时间（如果有）
