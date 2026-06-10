@@ -487,14 +487,14 @@
         try {
             // 先滚动到当前视频项的位置
             item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await sleep(200); // 等待滚动完成
+            await sleep(100); // 等待滚动完成
 
             // 找到选项按钮
             let cells = item.children[0]?.children;
             const optionBtn = cells[cells.length - 3].children[0];
 
             optionBtn.click();
-            await sleep(200); // 等待 popup 出现
+            await sleep(100); // 等待 popup 出现
 
             // 找到 popup
             const popup = await waitForElement('[data-surface] [data-testid="ContextualLayerRoot"]', 3000);
@@ -519,7 +519,7 @@
                 options[1].click();
 
                 // 等待定时发布选项展开
-                await sleep(200);
+                await sleep(100);
 
                 // 使用通用选择器查找所有输入框：0-日期，1-小时，2-分钟
                 const inputs = popup.querySelectorAll("input[id*='js_']");
@@ -554,7 +554,7 @@
                             const selectedItem = document.querySelector('[role="gridcell"][aria-selected="true"]')
                             if (selectedItem) {
                                 selectedItem.click();
-                                await sleep(200);
+                                await sleep(100);
                             }
                         } catch (e) {
                             console.log('未找到日期选择器的选中项');
@@ -570,7 +570,7 @@
                     const hourInput = inputs[1]; // 索引 1: 小时
                     if (hourInput) {
                         await triggerReactInput(hourInput, hour);
-                        await sleep(200);
+                        await sleep(100);
                     }
                 }
 
@@ -589,7 +589,7 @@
             }
 
             // 点击更新按钮
-            await sleep(200);
+            await sleep(100);
             // 尝试多种方式查找更新按钮
             let updateBtn = popup.querySelector('.x1t137rt[aria-busy="false"]');
             if (!updateBtn) {
@@ -604,7 +604,7 @@
 
             if (updateBtn) {
                 updateBtn.click();
-                await sleep(200); // 等待更新完成
+                await sleep(100); // 等待更新完成
             } else {
                 throw new Error('无法找到更新按钮');
             }
