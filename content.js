@@ -213,11 +213,11 @@
 
         // 聚焦输入框
         element.focus();
-        await sleep(50);
+        await sleep(30);
 
         // console.log('[triggerReactInput] 将触发', steps, '次', keyName, '键');
 
-        // 循环触发键盘事件
+        // 循环触发键盘事件（使用最小延迟）
         for (let i = 0; i < steps; i++) {
             element.dispatchEvent(new KeyboardEvent('keydown', {
                 key: keyName,
@@ -228,8 +228,6 @@
                 cancelable: true
             }));
 
-            await sleep(30); // 短暂延迟，让 React 处理
-
             element.dispatchEvent(new KeyboardEvent('keyup', {
                 key: keyName,
                 keyCode: keyCode,
@@ -239,12 +237,12 @@
                 cancelable: true
             }));
 
-            await sleep(30);
+            // 仅在多步时给 React 一点同步时间，单步不需要
+            if (i < steps - 1) await sleep(15);
         }
 
         // 触发 change 和 blur 事件
         element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-        await sleep(50);
         element.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
 
         return true;
@@ -384,6 +382,49 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    // 等待元素从 popup 中出现（比 waitForElement 更快，直接在容器内查找）
+    function waitForElementIn(container, selector, timeout = 2000) {
+        return new Promise((resolve, reject) => {
+            const found = container.querySelector(selector);
+            if (found) { resolve(found); return; }
+
+            const observer = new MutationObserver(() => {
+                const el = container.querySelector(selector);
+                if (el) { observer.disconnect(); resolve(el); }
+            });
+            observer.observe(container, { childList: true, subtree: true });
+            setTimeout(() => { observer.disconnect(); reject(new Error(`等待元素超时: ${selector}`)); }, timeout);
+        });
+    }
+
+    // 等待按钮变为可点击状态（aria-busy="false"）
+    function waitForButtonReady(container, timeout = 2000) {
+        return new Promise((resolve, reject) => {
+            const check = () => {
+                let btn = container.querySelector('.x1t137rt[aria-busy="false"]');
+                if (!btn) {
+                    const buttons = container.querySelectorAll('button');
+                    btn = Array.from(buttons).find(b => {
+                        const text = b.textContent?.toLowerCase() || '';
+                        return (text.includes('更新') || text.includes('保存') || text.includes('update') || text.includes('save')) &&
+                            b.getAttribute('aria-busy') !== 'true';
+                    });
+                }
+                return btn;
+            };
+
+            const found = check();
+            if (found) { resolve(found); return; }
+
+            const observer = new MutationObserver(() => {
+                const btn = check();
+                if (btn) { observer.disconnect(); resolve(btn); }
+            });
+            observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-busy'] });
+            setTimeout(() => { observer.disconnect(); reject(new Error('等待按钮超时')); }, timeout);
+        });
+    }
+
 
 
     // 复制第一行的描述
@@ -407,7 +448,7 @@
             }
 
             if (retry < maxRetries - 1) {
-                await sleep(500); // 等待500ms后重试
+                await sleep(300); // 等待300ms后重试
             }
         }
 
@@ -487,16 +528,15 @@
         try {
             // 先滚动到当前视频项的位置
             item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await sleep(100); // 等待滚动完成
+            await sleep(50); // 短暂等待滚动启动
 
             // 找到选项按钮
             let cells = item.children[0]?.children;
             const optionBtn = cells[cells.length - 3].children[0];
 
             optionBtn.click();
-            await sleep(100); // 等待 popup 出现
 
-            // 找到 popup
+            // 等待 popup 出现（事件驱动，不固定等待）
             const popup = await waitForElement('[data-surface] [data-testid="ContextualLayerRoot"]', 3000);
 
             // 找到 popup 里面的选项
@@ -518,8 +558,8 @@
                 // 选择定时发布
                 options[1].click();
 
-                // 等待定时发布选项展开
-                await sleep(100);
+                // 等待输入框出现（事件驱动）
+                await waitForElementIn(popup, "input[id*='js_']", 2000);
 
                 // 使用通用选择器查找所有输入框：0-日期，1-小时，2-分钟
                 const inputs = popup.querySelectorAll("input[id*='js_']");
@@ -546,15 +586,12 @@
                         // 日期输入框使用专门的处理函数（会点击输入框打开日期面板）
                         triggerDateInput(dateInput, dateValue);
 
-                        // 等待日期面板出现
-                        await sleep(200);
-
-                        // 尝试点击日期选择器中的选中项（如果存在）
+                        // 等待日期选中项出现（事件驱动）
+                        await sleep(100);
                         try {
                             const selectedItem = document.querySelector('[role="gridcell"][aria-selected="true"]')
                             if (selectedItem) {
                                 selectedItem.click();
-                                await sleep(100);
                             }
                         } catch (e) {
                             console.log('未找到日期选择器的选中项');
@@ -564,47 +601,20 @@
 
                 // 处理时间
                 const hour = String(publishTime.getHours());
-                const minute = String(publishTime.getMinutes());
 
                 if (inputs.length >= 2) {
                     const hourInput = inputs[1]; // 索引 1: 小时
                     if (hourInput) {
                         await triggerReactInput(hourInput, hour);
-                        await sleep(100);
                     }
                 }
-
-                // if (inputs.length >= 3) {
-                //     const minuteInput = inputs[2]; // 索引 2: 分钟
-                //     if (minuteInput) {
-                //         await triggerReactInput(minuteInput, minute);
-                //         await sleep(100);
-                //     }
-                // }
-
-                // const timeStr = `${publishTime.getFullYear()}-${String(publishTime.getMonth() + 1).padStart(2, '0')}-${String(publishTime.getDate()).padStart(2, '0')} ${hour}:${minute}`;
-                // let logTxt = `第 ${index + 1} 个视频：设置为 ${timeStr}`;
-                // // console.log(logTxt);
-                // showStatus(logTxt, 2000);
             }
 
-            // 点击更新按钮
-            await sleep(100);
-            // 尝试多种方式查找更新按钮
-            let updateBtn = popup.querySelector('.x1t137rt[aria-busy="false"]');
-            if (!updateBtn) {
-                // 备用方案：查找包含"更新"或"保存"文本的按钮
-                const buttons = popup.querySelectorAll('button');
-                updateBtn = Array.from(buttons).find(btn => {
-                    const text = btn.textContent?.toLowerCase() || '';
-                    return (text.includes('更新') || text.includes('保存') || text.includes('update') || text.includes('save')) &&
-                        btn.getAttribute('aria-busy') !== 'true';
-                });
-            }
+            // 等待更新按钮就绪（事件驱动，不固定等待）
+            const updateBtn = await waitForButtonReady(popup, 2000);
 
             if (updateBtn) {
                 updateBtn.click();
-                await sleep(100); // 等待更新完成
             } else {
                 throw new Error('无法找到更新按钮');
             }
@@ -654,12 +664,18 @@
             for (let i = 0; i < items.length; i++) {
                 await processVideoItem(items[i], i);
 
-                // 在处理下一个之前等待一下
+                // 在处理下一个之前短暂等待，让页面稳定
                 if (i < items.length - 1) {
-                    await sleep(1000);
+                    await sleep(300);
                 }
             }
 
+            // 等待发布按钮出现再点击
+            await waitForElement('.x19bke7z .xk50ysn', 5000);
+            const publishBtn = document.querySelectorAll('.x19bke7z .xk50ysn')[0];
+            if (publishBtn) {
+                publishBtn.click();
+            }
             showStatus(`完成！已处理 ${items.length} 个视频`, 5000);
 
         } catch (error) {
