@@ -62,5 +62,16 @@ for (const file of copyFiles) {
     console.log(`📄 ${file}（原样复制）`);
 }
 
+// 打包为带时间戳的 zip
+const { execSync } = require('child_process');
+const now = new Date();
+const timestamp = now.getFullYear().toString()
+    + String(now.getMonth() + 1).padStart(2, '0')
+    + String(now.getDate()).padStart(2, '0')
+    + String(now.getHours()).padStart(2, '0')
+    + String(now.getMinutes()).padStart(2, '0');
+const zipName = `fb-scheduler-plugin-${timestamp}.zip`;
+const zipPath = path.join(__dirname, zipName);
+execSync(`powershell -Command "Compress-Archive -Path '${DIST}\\*' -DestinationPath '${zipPath}' -Force"`);
 console.log(`\n🎉 构建完成！输出目录: dist/`);
-console.log('📦 将 dist/ 目录打包为 zip 即可发布');
+console.log(`📦 已打包: ${zipName}`);
