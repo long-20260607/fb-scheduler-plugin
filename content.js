@@ -674,7 +674,7 @@
             await waitForElement('.x19bke7z .xk50ysn', 5000);
             const publishBtn = document.querySelectorAll('.x19bke7z .xk50ysn')[0];
             if (publishBtn) {
-                // publishBtn.click();
+                publishBtn.click();
             }
             showStatus(`完成！已处理 ${items.length} 个视频`, 5000);
 
