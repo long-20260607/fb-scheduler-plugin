@@ -437,7 +437,7 @@
 
         for (let retry = 0; retry < maxRetries; retry++) {
             try {
-                let cells =  items[0]?.children[0].children;
+                let cells =  items[0]?.children[0].children?.[0].children;
                 let textElement = cells[cells.length-4]?.querySelector('[role="textbox"]');
                 if (textElement && textElement.innerText) {
                     description = textElement.innerText;
@@ -463,7 +463,7 @@
         for(let i = 1; i < items.length; i++){
             try {
                 // 找到当前行的编辑器
-                let cells = items[i]?.children[0].children;
+                let cells = items[i].children[0]?.children?.[0].children;
                 const editor = cells[cells.length-4]?.querySelector('[role="textbox"]');
                 if (!editor) {
                     console.log(`[copyDescription] 第 ${i + 1} 行未找到编辑器`);
@@ -531,7 +531,7 @@
             await sleep(50); // 短暂等待滚动启动
 
             // 找到选项按钮
-            let cells = item.children[0]?.children;
+            let cells = item.children[0]?.children?.[0].children;
             const optionBtn = cells[cells.length - 3].children[0];
 
             optionBtn.click();
@@ -674,7 +674,7 @@
             await waitForElement('.x19bke7z .xk50ysn', 5000);
             const publishBtn = document.querySelectorAll('.x19bke7z .xk50ysn')[0];
             if (publishBtn) {
-                publishBtn.click();
+                // publishBtn.click();
             }
             showStatus(`完成！已处理 ${items.length} 个视频`, 5000);
 
