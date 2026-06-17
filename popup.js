@@ -2,6 +2,7 @@
 
 // 激活 API 基础 URL（需要根据实际情况修改）
 // const ACTIVATION_API_BASE = 'http://localhost:3000';
+// const ACTIVATION_API_BASE = 'http://localhost:54321/functions/v1';
 const ACTIVATION_API_BASE = 'https://hizynzkovnnugjedqpuw.supabase.co/functions/v1';
 
 // 调用激活 API
@@ -141,6 +142,10 @@ async function loadActiveStatus() {
             // 未激活
             document.getElementById('activeStatus').style.display = 'none';
             document.getElementById('inactiveStatus').style.display = 'block';
+            // 如果有保存的激活码，自动回填
+            if (activeInfo && activeInfo.code) {
+                document.getElementById('codeInput').value = activeInfo.code;
+            }
         }
     } catch (error) {
         console.error('加载激活状态失败:', error);
@@ -258,8 +263,9 @@ async function getActivationStatus() {
             }
             return { isActive: true, activeInfo: activeInfo };
         } else {
-            // 激活无效或已过期，清除激活信息
-            await chrome.storage.local.remove('activeInfo');
+            // 激活无效或已过期，保留激活码，只标记为未激活
+            activeInfo.isActive = false;
+            await chrome.storage.local.set({ activeInfo: activeInfo });
             return { isActive: false };
         }
     } catch (error) {
