@@ -397,22 +397,53 @@
         });
     }
 
-    // 等待按钮变为可点击状态（aria-busy="false"）
-    function waitForButtonReady(container, timeout = 2000) {
-        return new Promise((resolve, reject) => {
-            const check = () => {
-                let btn = container.querySelector('.x1t137rt[aria-busy="false"]');
-                if (!btn) {
-                    const buttons = container.querySelectorAll('button');
-                    btn = Array.from(buttons).find(b => {
-                        const text = b.textContent?.toLowerCase() || '';
-                        return (text.includes('更新') || text.includes('保存') || text.includes('update') || text.includes('save')) &&
-                            b.getAttribute('aria-busy') !== 'true';
-                    });
-                }
-                return btn;
-            };
+    /**
+     * 按文案查找可点击元素（role="button" 或 <button> 或 <a>）
+     * @param {Element} container - 搜索范围，默认 document
+     * @param {string} text - 要匹配的文案（支持中英文，会同时匹配）
+     * @param {object} options - 可选配置
+     * @param {boolean} options.excludeBusy - 是否排除 aria-busy="true" 的元素，默认 true
+     * @param {string[]} options.extraTexts - 额外匹配的文案（如 ['保存草稿', 'save draft']）
+     * @returns {Element|null}
+     */
+    function findBtnByText(container, text, options = {}) {
+        const { excludeBusy = true, extraTexts = [] } = options;
+        const searchRoot = container || document;
 
+        // 所有可能的可点击元素
+        const candidates = searchRoot.querySelectorAll(
+            '[role="button"], button, a[href], [tabindex]'
+        );
+
+        // 1. 先找精确匹配
+        const exact = Array.from(candidates).find(el => {
+            const t = el.textContent?.trim();
+            return t === text &&
+                (!excludeBusy || el.getAttribute('aria-busy') !== 'true');
+        });
+        if (exact) return exact;
+
+        // 2. 没有精确匹配，再用 includes 模糊匹配额外文案
+        if (extraTexts.length === 0) return null;
+        return Array.from(candidates).find(el => {
+            const t = el.textContent?.trim();
+            if (!t) return false;
+            if (excludeBusy && el.getAttribute('aria-busy') === 'true') return false;
+            return extraTexts.some(kw => t.includes(kw));
+        }) || null;
+    }
+
+    /**
+     * 等待按文案匹配的按钮出现并可用
+     * @param {Element} container - 搜索范围
+     * @param {string} text - 要匹配的文案
+     * @param {number} timeout - 超时时间（ms）
+     * @param {object} options - 同 findBtnByText
+     * @returns {Promise<Element>}
+     */
+    function waitForBtnByText(container, text, timeout = 2000, options = {}) {
+        return new Promise((resolve, reject) => {
+            const check = () => findBtnByText(container, text, options);
             const found = check();
             if (found) { resolve(found); return; }
 
@@ -421,7 +452,7 @@
                 if (btn) { observer.disconnect(); resolve(btn); }
             });
             observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-busy'] });
-            setTimeout(() => { observer.disconnect(); reject(new Error('等待按钮超时')); }, timeout);
+            setTimeout(() => { observer.disconnect(); reject(new Error(`等待按钮"${text}"超时`)); }, timeout);
         });
     }
 
@@ -437,8 +468,7 @@
 
         for (let retry = 0; retry < maxRetries; retry++) {
             try {
-                let cells =  items[0]?.children[0].children?.[0].children;
-                let textElement = cells[cells.length-4]?.querySelector('[role="textbox"]');
+                let textElement = items[0]?.querySelector('[role="textbox"]');
                 if (textElement && textElement.innerText) {
                     description = textElement.innerText;
                     break;
@@ -463,8 +493,7 @@
         for(let i = 1; i < items.length; i++){
             try {
                 // 找到当前行的编辑器
-                let cells = items[i].children[0]?.children?.[0].children;
-                const editor = cells[cells.length-4]?.querySelector('[role="textbox"]');
+                const editor = items[i]?.querySelector('[role="textbox"]');
                 if (!editor) {
                     console.log(`[copyDescription] 第 ${i + 1} 行未找到编辑器`);
                     continue;
@@ -530,10 +559,16 @@
             item.scrollIntoView({ behavior: 'smooth', block: 'center' });
             await sleep(50); // 短暂等待滚动启动
 
-            // 找到选项按钮
-            let cells = item.children[0]?.children?.[0].children;
-            const optionBtn = cells[cells.length - 3].children[0];
+            // 找到定时发布按钮（含下拉箭头 SVG）
+            // 箭头 SVG 特征：viewBox="0 0 16 16" 且有 path d 含 "M12 6a"
+            const optionBtn = Array.from(
+                item.querySelectorAll('[role="button"] svg')
+            ).find(svg => {
+                const path = svg.querySelector('path');
+                return path && path.getAttribute('d')?.includes('M12 6a');
+            })?.closest('[role="button"]');
 
+            if (!optionBtn) throw new Error(`第 ${index + 1} 个视频未找到定时发布按钮`);
             optionBtn.click();
 
             // 等待 popup 出现（事件驱动，不固定等待）
@@ -611,7 +646,9 @@
             }
 
             // 等待更新按钮就绪（事件驱动，不固定等待）
-            const updateBtn = await waitForButtonReady(popup, 2000);
+            const updateBtn = await waitForBtnByText(popup, '更新', 2000, {
+                extraTexts: ['保存', 'update', 'save']
+            });
 
             if (updateBtn) {
                 updateBtn.click();
@@ -671,8 +708,9 @@
             }
 
             // 等待发布按钮出现再点击
-            await waitForElement('.x19bke7z .xk50ysn', 5000);
-            const publishBtn = document.querySelectorAll('.x19bke7z .xk50ysn')[0];
+            const publishBtn = await waitForBtnByText(document, '发布', 5000, {
+                extraTexts: ['Publish', 'Schedule']
+            });
             if (publishBtn) {
                 publishBtn.click();
             }
