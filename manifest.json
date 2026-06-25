@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Facebook 定时发布助手",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "自动设置 Facebook 视频的定时发布时间",
   "icons": {
     "16": "logo.png",
@@ -11,13 +11,11 @@
   "permissions": [
     "activeTab",
     "storage",
-    "scripting",
-    "sidePanel"
+    "scripting"
   ],
   "host_permissions": [
     "https://business.facebook.com/*",
-    "https://hizynzkovnnugjedqpuw.supabase.co/*",
-    "http://localhost:54321/*"
+    "https://hizynzkovnnugjedqpuw.supabase.co/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -26,9 +24,6 @@
       "48": "logo.png",
       "128": "logo.png"
     }
-  },
-  "side_panel": {
-    "default_path": "popup.html"
   },
   "content_scripts": [
     {
