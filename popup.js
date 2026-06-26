@@ -155,7 +155,10 @@ async function loadActiveStatus() {
 }
 
 // 激活
+let isActivating = false;
 async function activate() {
+    if (isActivating) return;
+    isActivating = true;
     const codeInput = document.getElementById('codeInput');
     const code = codeInput.value.trim();
 
@@ -194,12 +197,16 @@ async function activate() {
         console.error('激活失败:', error);
         showMessage('激活失败: ' + error.message, 'error');
     } finally {
+        isActivating = false;
         setLoading(false);
     }
 }
 
 // 取消激活
+let isCanceling = false;
 async function cancelActive() {
+    if (isCanceling) return;
+    isCanceling = true;
     if (!confirm('确定要取消激活吗？')) {
         return;
     }
@@ -237,6 +244,7 @@ async function cancelActive() {
         console.error('取消激活失败:', error);
         showMessage('取消激活失败: ' + error.message, 'error');
     } finally {
+        isCanceling = false;
         setLoading(false);
     }
 }
@@ -275,7 +283,10 @@ async function getActivationStatus() {
 }
 
 // 开始处理
+let isProcessing = false;
 async function startProcessing() {
+    if (isProcessing) return;
+    isProcessing = true;
     try {
         // 检查激活状态
         const status = await getActivationStatus();
@@ -315,6 +326,8 @@ async function startProcessing() {
     } catch (error) {
         console.error('启动处理失败:', error);
         showMessage('启动失败: ' + error.message, 'error');
+    } finally {
+        isProcessing = false;
     }
 }
 
