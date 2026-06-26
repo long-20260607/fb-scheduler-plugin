@@ -399,8 +399,9 @@
 
     /**
      * 按文案查找可点击元素（role="button" 或 <button> 或 <a>）
+     * 通过文本节点匹配，找到文本直接匹配的最内层可点击元素
      * @param {Element} container - 搜索范围，默认 document
-     * @param {string} text - 要匹配的文案（支持中英文，会同时匹配）
+     * @param {string} text - 要匹配的文案
      * @param {object} options - 可选配置
      * @param {boolean} options.excludeBusy - 是否排除 aria-busy="true" 的元素，默认 true
      * @param {string[]} options.extraTexts - 额外匹配的文案（如 ['保存草稿', 'save draft']）
@@ -409,28 +410,49 @@
     function findBtnByText(container, text, options = {}) {
         const { excludeBusy = true, extraTexts = [] } = options;
         const searchRoot = container || document;
+        const allTexts = [text, ...extraTexts];
 
-        // 所有可能的可点击元素
-        const candidates = searchRoot.querySelectorAll(
-            '[role="button"], button, a[href], [tabindex]'
+        // 检查文本是否匹配（精确匹配）
+        const isTextMatch = (t) => {
+            if (!t) return false;
+            const trimmed = t.trim();
+            return allTexts.some(keyword => trimmed === keyword);
+        };
+
+        // 向上查找最近的可点击祖先元素
+        const findClickableAncestor = (node) => {
+            let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+            while (el && el !== searchRoot) {
+                const role = el.getAttribute('role');
+                const tag = el.tagName.toLowerCase();
+                if (role === 'button' || tag === 'button' || tag === 'a' || el.hasAttribute('tabindex')) {
+                    if (excludeBusy && el.getAttribute('aria-busy') === 'true') {
+                        return null; // 排除 busy 状态
+                    }
+                    return el;
+                }
+                el = el.parentElement;
+            }
+            return null;
+        };
+
+        // 使用 TreeWalker 遍历文本节点，找到匹配的最内层可点击元素
+        const walker = document.createTreeWalker(
+            searchRoot,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
         );
 
-        // 1. 先找精确匹配
-        const exact = Array.from(candidates).find(el => {
-            const t = el.textContent?.trim();
-            return t === text &&
-                (!excludeBusy || el.getAttribute('aria-busy') !== 'true');
-        });
-        if (exact) return exact;
+        let node;
+        while (node = walker.nextNode()) {
+            if (isTextMatch(node.textContent)) {
+                const clickable = findClickableAncestor(node);
+                if (clickable) return clickable;
+            }
+        }
 
-        // 2. 没有精确匹配，再用 includes 模糊匹配额外文案
-        if (extraTexts.length === 0) return null;
-        return Array.from(candidates).find(el => {
-            const t = el.textContent?.trim();
-            if (!t) return false;
-            if (excludeBusy && el.getAttribute('aria-busy') === 'true') return false;
-            return extraTexts.some(kw => t.includes(kw));
-        }) || null;
+        return null;
     }
 
     /**
@@ -647,7 +669,7 @@
 
             // 等待更新按钮就绪（事件驱动，不固定等待）
             const updateBtn = await waitForBtnByText(popup, '更新', 2000, {
-                extraTexts: ['保存', 'update', 'save']
+                extraTexts: ['保存', '儲存', 'update', 'save']
             });
 
             if (updateBtn) {
@@ -709,7 +731,7 @@
 
             // 等待发布按钮出现再点击
             const publishBtn = await waitForBtnByText(document, '发布', 5000, {
-                extraTexts: ['Publish', 'Schedule']
+                extraTexts: ['發佈', '發布', 'Publish', 'Schedule']
             });
             if (publishBtn) {
                 publishBtn.click();
