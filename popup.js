@@ -359,5 +359,205 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // 多标签页队列管理
+    initQueueManager();
 });
+
+// ==================== 多标签页队列管理 ====================
+
+let tabQueue = [];
+let currentTabIndex = -1;
+let isQueueProcessing = false;
+
+// 初始化队列管理器
+function initQueueManager() {
+    const startQueueBtn = document.getElementById('startQueueBtn');
+    const stopQueueBtn = document.getElementById('stopQueueBtn');
+
+    if (startQueueBtn) {
+        startQueueBtn.addEventListener('click', startQueueProcessing);
+    }
+    if (stopQueueBtn) {
+        stopQueueBtn.addEventListener('click', stopQueueProcessing);
+    }
+
+    // 监听 background 消息
+    chrome.runtime.onMessage.addListener((message) => {
+        switch (message.action) {
+            case 'queueUpdated':
+                updateQueueDisplay(message.data);
+                break;
+            case 'allCompleted':
+                showAllCompleted(message.data);
+                break;
+            case 'processingStarted':
+                showProcessingStarted(message.data);
+                break;
+            case 'error':
+                showMessage(message.data.message, 'error');
+                break;
+        }
+    });
+
+    // 获取当前队列状态
+    getQueueStatus();
+}
+
+// 获取队列状态
+async function getQueueStatus() {
+    try {
+        const response = await chrome.runtime.sendMessage({ action: 'getQueueStatus' });
+        if (response) {
+            updateQueueDisplay(response);
+        }
+    } catch (e) {
+        // background 未加载时忽略
+    }
+}
+
+// 开始处理队列（自动扫描）
+async function startQueueProcessing() {
+    const startQueueBtn = document.getElementById('startQueueBtn');
+    if (startQueueBtn) {
+        startQueueBtn.disabled = true;
+        startQueueBtn.textContent = '扫描中...';
+    }
+
+    try {
+        // 先扫描
+        const scanResult = await chrome.runtime.sendMessage({ action: 'scanTabs' });
+
+        if (!scanResult || !scanResult.success) {
+            showMessage('扫描失败: ' + (scanResult?.error || '未知错误'), 'error');
+            return;
+        }
+
+        if (scanResult.count === 0) {
+            showMessage('未找到 Facebook 批量上传页面', 'error');
+            return;
+        }
+
+        showMessage(`找到 ${scanResult.count} 个页面，开始处理...`, 'success');
+
+        // 显示队列区域
+        document.getElementById('queueSection').style.display = 'block';
+
+        // 开始处理
+        await chrome.runtime.sendMessage({ action: 'startQueue' });
+    } catch (e) {
+        showMessage('启动失败: ' + e.message, 'error');
+    } finally {
+        if (startQueueBtn) {
+            startQueueBtn.disabled = false;
+            startQueueBtn.textContent = '开始处理';
+        }
+    }
+}
+
+// 停止处理队列
+async function stopQueueProcessing() {
+    try {
+        await chrome.runtime.sendMessage({ action: 'stopQueue' });
+    } catch (e) {
+        showMessage('停止失败: ' + e.message, 'error');
+    }
+}
+
+// 更新队列显示
+function updateQueueDisplay(data) {
+    if (!data) return;
+
+    tabQueue = data.tabQueue || [];
+    currentTabIndex = data.currentTabIndex;
+    isQueueProcessing = data.isProcessing;
+
+    const container = document.getElementById('tabQueue');
+    const startQueueBtn = document.getElementById('startQueueBtn');
+    const stopQueueBtn = document.getElementById('stopQueueBtn');
+    const queueStatus = document.getElementById('queueStatus');
+
+    if (!container) return;
+
+    // 显示队列区域
+    document.getElementById('queueSection').style.display = 'block';
+
+    // 更新按钮状态
+    if (startQueueBtn) startQueueBtn.disabled = isQueueProcessing;
+    if (stopQueueBtn) stopQueueBtn.style.display = isQueueProcessing ? 'block' : 'none';
+
+    // 更新状态文本
+    if (queueStatus) {
+        if (isQueueProcessing) {
+            const completedCount = tabQueue.filter(t => t.status === 'completed').length;
+            const errorCount = tabQueue.filter(t => t.status === 'error').length;
+            queueStatus.textContent = `处理中 (${completedCount}/${tabQueue.length})`;
+            if (errorCount > 0) {
+                queueStatus.textContent += ` ${errorCount}个失败`;
+            }
+            queueStatus.className = 'queue-status processing';
+        } else if (tabQueue.length > 0) {
+            const completedCount = tabQueue.filter(t => t.status === 'completed').length;
+            queueStatus.textContent = `共 ${tabQueue.length} 个页面`;
+            queueStatus.className = 'queue-status';
+        } else {
+            queueStatus.textContent = '';
+            queueStatus.className = 'queue-status';
+        }
+    }
+
+    // 生成队列HTML
+    container.innerHTML = tabQueue.map((tab, index) => {
+        const isActive = index === currentTabIndex;
+        const statusIcon = getStatusIcon(tab.status);
+        const statusText = getStatusText(tab.status);
+
+        return `
+            <div class="tab-item ${tab.status} ${isActive ? 'active' : ''}">
+                <span class="tab-index">${index + 1}</span>
+                <span class="tab-title" title="${tab.url}">${tab.title}</span>
+                <span class="tab-status">${statusIcon} ${statusText}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+// 获取状态图标
+function getStatusIcon(status) {
+    const iconMap = {
+        'pending': '⏳',
+        'processing': '⚡',
+        'completed': '✅',
+        'error': '❌'
+    };
+    return iconMap[status] || '';
+}
+
+// 获取状态文本
+function getStatusText(status) {
+    const statusMap = {
+        'pending': '等待中',
+        'processing': '处理中',
+        'completed': '已完成',
+        'error': '出错'
+    };
+    return statusMap[status] || status;
+}
+
+// 显示所有完成
+function showAllCompleted(data) {
+    const completedCount = data.tabQueue.filter(t => t.status === 'completed').length;
+    const errorCount = data.tabQueue.filter(t => t.status === 'error').length;
+
+    let msg = `全部处理完成！成功 ${completedCount} 个`;
+    if (errorCount > 0) {
+        msg += `，失败 ${errorCount} 个`;
+    }
+    showMessage(msg, 'success');
+}
+
+// 显示处理开始
+function showProcessingStarted(data) {
+    showMessage(`开始处理 ${data.tabQueue.length} 个页面`, 'success');
+}
 

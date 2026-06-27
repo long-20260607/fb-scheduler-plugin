@@ -802,14 +802,25 @@
         } finally {
             // 清除运行状态（运行完成或报错中断后都设置为 false）
             isProcessing = false;
+            // 通知 background 处理完成
+            try {
+                chrome.runtime.sendMessage({
+                    action: 'tabCompleted'
+                });
+            } catch (e) {
+                // background 未加载时忽略
+            }
         }
     }
 
-    // 监听来自 popup 的消息（通过 postMessage）
+    // 监听来自 popup 和 background 的消息（通过 postMessage）
     window.addEventListener('message', (event) => {
-        // 只处理来自 popup 的消息
-        if (event.data && event.data.action === 'startProcessing' && event.data.source === 'facebook-schedule-helper-popup') {
-            handleStartClick();
+        // 处理来自 popup 或 background 的消息
+        if (event.data && event.data.action === 'startProcessing') {
+            if (event.data.source === 'facebook-schedule-helper-popup' ||
+                event.data.source === 'background') {
+                handleStartClick();
+            }
         }
     });
 
