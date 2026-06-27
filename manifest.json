@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Facebook 定时发布助手",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "自动设置 Facebook 视频的定时发布时间",
   "icons": {
     "16": "logo.png",

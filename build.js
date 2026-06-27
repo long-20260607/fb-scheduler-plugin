@@ -37,6 +37,13 @@ const outFile = OUTPUT_FILE.split(path.sep).join('/');
 
 const psCmd = `Compress-Archive -Path @(${fileList}) -DestinationPath '${outFile}' -Force`;
 
+// 删除旧的 zip 文件
+const oldZips = fs.readdirSync(OUTPUT_DIR).filter(f => f.startsWith(`${PLUGIN_NAME}-`) && f.endsWith('.zip'));
+oldZips.forEach(f => fs.unlinkSync(path.join(OUTPUT_DIR, f)));
+if (oldZips.length > 0) {
+    console.log(`已删除 ${oldZips.length} 个旧包`);
+}
+
 console.log('打包中...');
 try {
     execSync(`powershell -Command "${psCmd}"`, { stdio: 'inherit' });

@@ -574,6 +574,45 @@
 
     }
 
+    // 检查视频项的定时是否设置成功
+    // 定时设置成功后，按钮文案从"立即發佈"变为"排定時間"
+    function verifyScheduleSet(item, index) {
+        // 查找发布按钮（role="button"，含下拉箭头 SVG：M12 6a）
+        const publishBtn = Array.from(
+            item.querySelectorAll('[role="button"] svg')
+        ).find(svg => {
+            const path = svg.querySelector('path');
+            return path && path.getAttribute('d')?.includes('M12 6a');
+        })?.closest('[role="button"]');
+
+        if (!publishBtn) {
+            // 找不到按钮，无法判断，视为通过（避免误阻塞）
+            return true;
+        }
+
+        const btnText = publishBtn.textContent.trim();
+
+        // 设置成功：文案变为"排定時間"
+        if (btnText.includes('排定時間') || btnText.includes('排定时间') || btnText.includes('发定时帖') || btnText.includes('Scheduled')) {
+            return true;
+        }
+
+        // 未设置成功：文案仍为"立即發佈"/"发布"等
+        console.warn(`[verifyScheduleSet] ⚠️ 第 ${index + 1} 个视频未设置定时，按钮文案: "${btnText}"`);
+        return false;
+    }
+
+    // 验证所有视频项的定时状态（第一个除外）
+    function verifyAllSchedules(items) {
+        const failed = [];
+        for (let i = 1; i < items.length; i++) {
+            if (!verifyScheduleSet(items[i], i)) {
+                failed.push(i + 1); // 记录失败的序号（1-based）
+            }
+        }
+        return failed;
+    }
+
     // 处理单个视频项
     async function processVideoItem(item, index) {
         try {
@@ -678,6 +717,9 @@
                 throw new Error('无法找到更新按钮');
             }
 
+            // 等待 popup 关闭，确保状态已更新
+            await sleep(300);
+
             return true;
         } catch (error) {
             console.error(`处理第 ${index + 1} 个视频时出错:`, error);
@@ -728,6 +770,22 @@
                     await sleep(300);
                 }
             }
+
+            // ====== 发布前验证：检查定时是否全部设置成功（第一个除外） ======
+            showStatus('正在验证定时设置...', 2000);
+            await sleep(500); // 等待页面完全稳定
+
+            const failedItems = verifyAllSchedules(items);
+            if (failedItems.length > 0) {
+                const failedList = failedItems.join('、');
+                const msg = `⚠️ 以下视频的定时可能未设置成功：第 ${failedList} 个。请手动检查后再发布！`;
+                showStatus(msg, 8000);
+                console.warn(`[验证失败] ${msg}`);
+                // 不自动发布，让用户手动确认
+                return;
+            }
+
+            console.log('[验证通过] 所有视频定时设置正确');
 
             // 等待发布按钮出现再点击
             const publishBtn = await waitForBtnByText(document, '发布', 5000, {
