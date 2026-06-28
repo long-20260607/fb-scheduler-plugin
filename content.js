@@ -717,9 +717,6 @@
                 throw new Error('无法找到更新按钮');
             }
 
-            // 等待 popup 关闭，确保状态已更新
-            await sleep(300);
-
             return true;
         } catch (error) {
             console.error(`处理第 ${index + 1} 个视频时出错:`, error);
@@ -764,17 +761,9 @@
             // 逐个处理视频
             for (let i = 0; i < items.length; i++) {
                 await processVideoItem(items[i], i);
-
-                // 在处理下一个之前短暂等待，让页面稳定
-                if (i < items.length - 1) {
-                    await sleep(300);
-                }
             }
 
             // ====== 发布前验证：检查定时是否全部设置成功（第一个除外） ======
-            showStatus('正在验证定时设置...', 2000);
-            await sleep(500); // 等待页面完全稳定
-
             const failedItems = verifyAllSchedules(items);
             if (failedItems.length > 0) {
                 const failedList = failedItems.join('、');
