@@ -109,6 +109,40 @@ function generateFingerprint() {
     }
 }
 
+// 获取设备指纹（优先使用缓存，确保跨标签页一致）
+let fingerprintPromise = null;
+async function getFingerprint() {
+    // 防止并发调用导致重复生成
+    if (fingerprintPromise) return fingerprintPromise;
+
+    fingerprintPromise = (async () => {
+        try {
+            const result = await chrome.storage.local.get(['cachedFingerprint', 'activeInfo']);
+            // 优先使用已缓存的指纹
+            if (result.cachedFingerprint) {
+                return result.cachedFingerprint;
+            }
+            // 兼容老用户：从已存储的激活信息中读取指纹
+            if (result.activeInfo && result.activeInfo.fingerId) {
+                await chrome.storage.local.set({ cachedFingerprint: result.activeInfo.fingerId });
+                return result.activeInfo.fingerId;
+            }
+            // 首次生成，缓存后返回
+            const fp = generateFingerprint();
+            await chrome.storage.local.set({ cachedFingerprint: fp });
+            return fp;
+        } catch (e) {
+            return generateFingerprint();
+        }
+    })();
+
+    try {
+        return await fingerprintPromise;
+    } finally {
+        fingerprintPromise = null;
+    }
+}
+
 // 显示消息
 function showMessage(text, type) {
     const messageEl = document.getElementById('message');
@@ -170,7 +204,7 @@ async function activate() {
     setLoading(true);
 
     try {
-        const fingerId = generateFingerprint();
+        const fingerId = await getFingerprint();
 
         // 直接调用激活 API
         const data = await callActivationAPI('/plugin-active', fingerId, code);
@@ -223,14 +257,12 @@ async function cancelActive() {
             return;
         }
 
-        const fingerId = generateFingerprint();
-
-        // 直接调用取消激活 API
-        const data = await callActivationAPI('/plugin-unactive', fingerId, activeInfo.code);
+        // 直接调用取消激活 API（使用存储的指纹，确保与激活时一致）
+        const data = await callActivationAPI('/plugin-unactive', activeInfo.fingerId, activeInfo.code);
 
         if (data.status === true) {
-            // 清除激活信息
-            await chrome.storage.local.remove('activeInfo');
+            // 清除激活信息和缓存的指纹
+            await chrome.storage.local.remove(['activeInfo', 'cachedFingerprint']);
 
             showMessage(data.msg || '取消激活成功', 'success');
             // 重新加载状态
