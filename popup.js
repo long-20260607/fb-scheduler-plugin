@@ -34,77 +34,73 @@ function formatExpireTime(isoString) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// 生成设备指纹（确保跨浏览器一致性）
-function generateFingerprint() {
+// 生成指纹公共组件（硬件 + 系统特征，跨配置文件稳定）
+function getFingerprintComponents() {
     const components = [];
+    components.push(screen.width + 'x' + screen.height);
+    components.push(screen.colorDepth);
+    components.push(navigator.hardwareConcurrency || 'unknown');
+    components.push(navigator.deviceMemory || 'unknown');
+    components.push(new Date().getTimezoneOffset());
+    components.push(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    components.push(navigator.language);
+    components.push(navigator.platform);
+    return components;
+}
 
+// 哈希计算（新旧算法共用）
+function computeHash(combined) {
+    let hash1 = 0, hash2 = 0, hash3 = 0;
+    for (let i = 0; i < combined.length; i++) {
+        const char = combined.charCodeAt(i);
+        hash1 = ((hash1 << 5) - hash1) + char;
+        hash1 = hash1 & hash1;
+        hash2 = hash2 * 31 + char;
+        hash2 = hash2 & 0xFFFFFFFF;
+        hash3 = hash3 + char * (i + 1);
+        hash3 = hash3 & 0xFFFFFFFF;
+    }
+    const combinedHash = Math.abs(hash1).toString(36) +
+                       Math.abs(hash2).toString(36) +
+                       Math.abs(hash3).toString(36);
+    return combinedHash.padEnd(16, '0').substring(0, 16);
+}
+
+// 新算法：不含 Canvas（跨配置文件/重装稳定）
+function generateFingerprint() {
     try {
-        // 硬件特征
-        components.push(screen.width + 'x' + screen.height);
-        components.push(screen.colorDepth);
-        components.push(navigator.hardwareConcurrency || 'unknown');
-        components.push(navigator.deviceMemory || 'unknown');
+        const components = getFingerprintComponents();
+        return computeHash(components.join('|'));
+    } catch (error) {
+        console.error('生成设备指纹失败:', error);
+        return 'fingerprint-error';
+    }
+}
 
-        // 系统特征
-        components.push(new Date().getTimezoneOffset());
-        components.push(Intl.DateTimeFormat().resolvedOptions().timeZone);
-        components.push(navigator.language);
-        components.push(navigator.platform);
-
-        // Canvas指纹
+// 旧算法：含 Canvas（兼容老用户已绑定的指纹）
+function generateFingerprintLegacy() {
+    try {
+        const components = getFingerprintComponents();
+        // Canvas 指纹（旧版本使用）
         try {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             canvas.width = 300;
             canvas.height = 80;
-
             ctx.textBaseline = 'alphabetic';
             ctx.fillStyle = '#FF6600';
             ctx.fillRect(120, 1, 60, 18);
             ctx.fillStyle = '#0066CC';
             ctx.font = '12pt Arial';
             ctx.fillText('FacebookSchedule2024', 2, 16);
-
             const canvasData = canvas.toDataURL();
             components.push(canvasData.substring(canvasData.length - 80));
         } catch (e) {
             components.push('canvas-unavailable');
         }
-
-        // 生成更长的哈希
-        const combined = components.join('|');
-
-        // 使用多个哈希算法组合
-        let hash1 = 0;
-        let hash2 = 0;
-        let hash3 = 0;
-
-        for (let i = 0; i < combined.length; i++) {
-            const char = combined.charCodeAt(i);
-
-            // 第一个哈希算法
-            hash1 = ((hash1 << 5) - hash1) + char;
-            hash1 = hash1 & hash1;
-
-            // 第二个哈希算法
-            hash2 = hash2 * 31 + char;
-            hash2 = hash2 & 0xFFFFFFFF;
-
-            // 第三个哈希算法
-            hash3 = hash3 + char * (i + 1);
-            hash3 = hash3 & 0xFFFFFFFF;
-        }
-
-        // 组合多个哈希值，生成更长的指纹
-        const combinedHash = Math.abs(hash1).toString(36) +
-                           Math.abs(hash2).toString(36) +
-                           Math.abs(hash3).toString(36);
-
-        // 确保长度至少为16位
-        return combinedHash.padEnd(16, '0').substring(0, 16);
-
+        return computeHash(components.join('|'));
     } catch (error) {
-        console.error('生成设备指纹失败:', error);
+        console.error('生成旧设备指纹失败:', error);
         return 'fingerprint-error';
     }
 }
@@ -198,16 +194,31 @@ async function activate() {
 
     if (!code) {
         showMessage('请输入激活码', 'error');
+        isActivating = false;
         return;
     }
 
     setLoading(true);
 
     try {
-        const fingerId = await getFingerprint();
+        let fingerId = await getFingerprint();
 
         // 直接调用激活 API
-        const data = await callActivationAPI('/plugin-active', fingerId, code);
+        let data = await callActivationAPI('/plugin-active', fingerId, code);
+
+        // 新指纹激活失败时，自动尝试旧指纹（兼容老用户重装场景）
+        if (data.status !== true) {
+            const legacyFp = generateFingerprintLegacy();
+            if (legacyFp !== fingerId && legacyFp !== 'fingerprint-error') {
+                console.log('新指纹未匹配，尝试旧指纹兼容...');
+                data = await callActivationAPI('/plugin-active', legacyFp, code);
+                if (data.status === true) {
+                    // 旧指纹匹配成功，更新缓存为旧指纹
+                    await chrome.storage.local.set({ cachedFingerprint: legacyFp });
+                    fingerId = legacyFp;
+                }
+            }
+        }
 
         if (data.status === true) {
             // 保存激活信息
