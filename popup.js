@@ -34,6 +34,9 @@ function formatExpireTime(isoString) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// 指纹算法版本（升级算法时递增，触发旧缓存自动更新）
+const FINGERPRINT_ALGO_VERSION = 'v2';
+
 // 生成指纹公共组件（硬件 + 系统特征，跨配置文件稳定）
 function getFingerprintComponents() {
     const components = [];
@@ -113,19 +116,34 @@ async function getFingerprint() {
 
     fingerprintPromise = (async () => {
         try {
-            const result = await chrome.storage.local.get(['cachedFingerprint', 'activeInfo']);
-            // 优先使用已缓存的指纹
+            const result = await chrome.storage.local.get(['cachedFingerprint', 'fingerprintAlgoVersion', 'activeInfo']);
+
+            // 算法版本不匹配 → 清除旧缓存，用新算法重新生成
+            if (result.cachedFingerprint && result.fingerprintAlgoVersion !== FINGERPRINT_ALGO_VERSION) {
+                console.log('指纹算法版本升级，重新生成指纹...');
+                const fp = generateFingerprint();
+                const updateData = { cachedFingerprint: fp, fingerprintAlgoVersion: FINGERPRINT_ALGO_VERSION };
+                // 同步更新 activeInfo 中的指纹（确保取消激活等操作使用新指纹）
+                if (result.activeInfo && result.activeInfo.fingerId) {
+                    result.activeInfo.fingerId = fp;
+                    updateData.activeInfo = result.activeInfo;
+                }
+                await chrome.storage.local.set(updateData);
+                return fp;
+            }
+
             if (result.cachedFingerprint) {
                 return result.cachedFingerprint;
             }
-            // 兼容老用户：从已存储的激活信息中读取指纹
-            if (result.activeInfo && result.activeInfo.fingerId) {
+
+            // 兼容老用户：从已存储的激活信息中读取指纹（且版本匹配）
+            if (result.activeInfo && result.activeInfo.fingerId && result.fingerprintAlgoVersion === FINGERPRINT_ALGO_VERSION) {
                 await chrome.storage.local.set({ cachedFingerprint: result.activeInfo.fingerId });
                 return result.activeInfo.fingerId;
             }
             // 首次生成，缓存后返回
             const fp = generateFingerprint();
-            await chrome.storage.local.set({ cachedFingerprint: fp });
+            await chrome.storage.local.set({ cachedFingerprint: fp, fingerprintAlgoVersion: FINGERPRINT_ALGO_VERSION });
             return fp;
         } catch (e) {
             return generateFingerprint();
@@ -201,24 +219,10 @@ async function activate() {
     setLoading(true);
 
     try {
-        let fingerId = await getFingerprint();
+        const fingerId = await getFingerprint();
 
-        // 直接调用激活 API
-        let data = await callActivationAPI('/plugin-active', fingerId, code);
-
-        // 新指纹激活失败时，自动尝试旧指纹（兼容老用户重装场景）
-        if (data.status !== true) {
-            const legacyFp = generateFingerprintLegacy();
-            if (legacyFp !== fingerId && legacyFp !== 'fingerprint-error') {
-                console.log('新指纹未匹配，尝试旧指纹兼容...');
-                data = await callActivationAPI('/plugin-active', legacyFp, code);
-                if (data.status === true) {
-                    // 旧指纹匹配成功，更新缓存为旧指纹
-                    await chrome.storage.local.set({ cachedFingerprint: legacyFp });
-                    fingerId = legacyFp;
-                }
-            }
-        }
+        // 调用激活 API
+        const data = await callActivationAPI('/plugin-active', fingerId, code);
 
         if (data.status === true) {
             // 保存激活信息
