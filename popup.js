@@ -356,15 +356,20 @@ async function startProcessing() {
             return;
         }
 
+        // 获取自定义描述
+        const customDescriptionInput = document.getElementById('customDescriptionInput');
+        const customDescription = customDescriptionInput?.value?.trim() || '';
+
         // 使用 executeScript 发送 postMessage 启动处理
         // javascript-obfuscator:disable
         await chrome.scripting.executeScript({
             target: {
                 tabId: tab.id
             },
-            func: ()=>{
-                window.postMessage({ action: 'startProcessing', source: 'facebook-schedule-helper-popup'}, '*');
-            }
+            func: (desc)=>{
+                window.postMessage({ action: 'startProcessing', source: 'facebook-schedule-helper-popup', customDescription: desc}, '*');
+            },
+            args: [customDescription]
         });
         // await chrome.scripting.executeScript({target: { tabId: tab.id }, func: ()=>{window.postMessage({ action: 'startProcessing', source: 'facebook-schedule-helper-popup'}, '*');}});
 
@@ -372,6 +377,57 @@ async function startProcessing() {
 
     } catch (error) {
         console.error('启动处理失败:', error);
+        showMessage('启动失败: ' + error.message, 'error');
+    } finally {
+        isProcessing = false;
+    }
+}
+
+// 次日定时发布处理
+async function startNextDayProcessing() {
+    if (isProcessing) return;
+    isProcessing = true;
+    try {
+        // 检查激活状态
+        const status = await getActivationStatus();
+        if (!status.isActive) {
+            showMessage('请先激活插件', 'error');
+            return;
+        }
+
+        // 获取当前活动标签页
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+        if (!tab) {
+            showMessage('无法获取当前标签页', 'error');
+            return;
+        }
+
+        // 检查是否在正确的页面
+        if (!tab.url || !tab.url.includes('business.facebook.com/latest/bulk_upload_composer')) {
+            showMessage('请在 Facebook 批量上传页面使用此功能', 'error');
+            return;
+        }
+
+        // 获取自定义描述
+        const customDescriptionInput = document.getElementById('customDescriptionInput');
+        const customDescription = customDescriptionInput?.value?.trim() || '';
+
+        // 使用 executeScript 发送 postMessage 启动次日定时处理
+        await chrome.scripting.executeScript({
+            target: {
+                tabId: tab.id
+            },
+            func: (desc)=>{
+                window.postMessage({ action: 'startNextDayProcessing', source: 'facebook-schedule-helper-popup', customDescription: desc}, '*');
+            },
+            args: [customDescription]
+        });
+
+        showMessage('已开始次日定时发布处理', 'success');
+
+    } catch (error) {
+        console.error('启动次日定时处理失败:', error);
         showMessage('启动失败: ' + error.message, 'error');
     } finally {
         isProcessing = false;
@@ -388,6 +444,37 @@ function sendMesageToMain(){
 document.addEventListener('DOMContentLoaded', () => {
     loadActiveStatus();
 
+    // 自定义描述 textarea 自动高度调整
+    const textarea = document.getElementById('customDescriptionInput');
+    if (textarea) {
+        // 从缓存恢复内容
+        chrome.storage.local.get(['cachedCustomDescription'], (result) => {
+            if (result.cachedCustomDescription) {
+                textarea.value = result.cachedCustomDescription;
+                // 触发 input 事件以调整高度
+                textarea.dispatchEvent(new Event('input'));
+            }
+        });
+
+        // 防抖保存：停止输入 500ms 后才保存
+        let saveTimeout = null;
+
+        // 监听输入变化，保存到缓存
+        textarea.addEventListener('input', function() {
+            // 防抖保存
+            if (saveTimeout) clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                chrome.storage.local.set({ cachedCustomDescription: this.value });
+            }, 500);
+
+            // 重置高度为 auto 以获取正确的 scrollHeight
+            this.style.height = 'auto';
+            // 设置高度为 scrollHeight，但最多 5 行（约 120px）
+            const maxHeight = 120;
+            this.style.height = Math.min(this.scrollHeight, maxHeight) + 'px';
+        });
+    }
+
     document.getElementById('activeBtn').addEventListener('click', activate);
     document.getElementById('cancelActiveBtn').addEventListener('click', cancelActive);
 
@@ -395,6 +482,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const startBtn = document.getElementById('startBtn');
     if (startBtn) {
         startBtn.addEventListener('click', startProcessing);
+    }
+
+    // 次日定时发布按钮
+    const nextDayBtn = document.getElementById('nextDayBtn');
+    if (nextDayBtn) {
+        nextDayBtn.addEventListener('click', startNextDayProcessing);
     }
 
     // 支持回车键激活

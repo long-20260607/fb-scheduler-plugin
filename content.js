@@ -177,7 +177,7 @@
         const target = parseInt(value) || 0;
 
         // 获取最大值（从 aria-valuemax，如果没有则默认23，24小时制）
-        let maxValue = 23;
+        let maxValue = parseInt(element.getAttribute('aria-valuemax')) || 23;
 
         // console.log('[triggerReactInput] Spinbutton: 当前值=', currentValue, '目标值=', target, '最大值=', maxValue);
 
@@ -481,38 +481,44 @@
 
 
     // 复制第一行的描述
-    async function copyDescription(items){
+    async function copyDescription(items, customDescription = ''){
 
-        // 获取第一行的描述，如果存在就复制到其他行
-        // 添加重试逻辑，每次等待500ms
-        let description = null;
-        const maxRetries = 5; // 最多重试5次
+        // 如果有自定义描述，直接使用
+        let description = customDescription || null;
 
-        for (let retry = 0; retry < maxRetries; retry++) {
-            try {
-                let textElement = items[0]?.querySelector('[role="textbox"]');
-                if (textElement && textElement.innerText) {
-                    description = textElement.innerText;
-                    break;
+        // 如果没有自定义描述，从第一行获取
+        if (!description) {
+            // 获取第一行的描述，如果存在就复制到其他行
+            // 添加重试逻辑，每次等待500ms
+            const maxRetries = 5; // 最多重试5次
+
+            for (let retry = 0; retry < maxRetries; retry++) {
+                try {
+                    let textElement = items[0]?.querySelector('[role="textbox"]');
+                    if (textElement && textElement.innerText) {
+                        description = textElement.innerText;
+                        break;
+                    }
+                } catch (err) {
+                    console.log(`[copyDescription] 获取描述文本失败 (重试 ${retry + 1}/${maxRetries}):`, err);
                 }
-            } catch (err) {
-                console.log(`[copyDescription] 获取描述文本失败 (重试 ${retry + 1}/${maxRetries}):`, err);
-            }
 
-            if (retry < maxRetries - 1) {
-                await sleep(300); // 等待300ms后重试
+                if (retry < maxRetries - 1) {
+                    await sleep(300); // 等待300ms后重试
+                }
             }
         }
 
         if(!description){
-            console.log('[copyDescription] 无法获取第一行的描述文本，跳过复制');
+            console.log('[copyDescription] 无法获取描述文本，跳过复制');
             return;
         }
 
         console.log('[copyDescription] 找到描述文本:', description);
 
-        // 为其他行设置描述
-        for(let i = 1; i < items.length; i++){
+        // 如果有自定义描述，从第一行开始设置；否则从第二行开始（保留第一行原有描述）
+        const startIndex = customDescription ? 0 : 1;
+        for(let i = startIndex; i < items.length; i++){
             try {
                 // 找到当前行的编辑器
                 const editor = items[i]?.querySelector('[role="textbox"]');
@@ -614,7 +620,8 @@
     }
 
     // 处理单个视频项
-    async function processVideoItem(item, index) {
+    // mode: 'immediate' = 立即发布模式（默认），'nextDay' = 次日定时模式
+    async function processVideoItem(item, index, mode = 'immediate') {
         try {
             // 先滚动到当前视频项的位置
             item.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -643,13 +650,31 @@
 
             const options = optionsGroup.children;
 
-            if (index === 0) {
-                // 第一条：立即发布
+            if (mode === 'immediate' && index === 0) {
+                // 立即发布模式：第一条立即发布
                 options[0].click();
                 showStatus(`第 1 个视频：设置为立即发布`, 2000);
             } else {
-                // 其他：定时发布
-                const publishTime = new Date(Date.now() + index * 60 * 60 * 1000);
+                // 计算发布时间
+                let publishTime;
+                if (mode === 'nextDay') {
+                    // 次日定时模式：明天的 index 点（0点、1点、2点...）
+                    const tomorrow = new Date();
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    tomorrow.setHours(index, 0, 0, 0);
+                    publishTime = tomorrow;
+                    showStatus(`第 ${index + 1} 个视频：设置为次日 ${index}:00 发布`, 2000);
+                } else {
+                    // 立即发布模式：当前时间 + index 小时
+                    publishTime = new Date(Date.now() + index * 60 * 60 * 1000);
+                }
+
+                // 检查发布时间是否满足 Facebook 的 20 分钟要求
+                const minPublishTime = new Date(Date.now() + 20 * 60 * 1000);
+                if (publishTime < minPublishTime) {
+                    const timeStr = `${publishTime.getMonth() + 1}/${publishTime.getDate()} ${publishTime.getHours()}:${String(publishTime.getMinutes()).padStart(2, '0')}`;
+                    throw new Error(`第 ${index + 1} 个视频的发布时间 ${timeStr} 不满足 Facebook 的 20 分钟要求，已终止`);
+                }
 
                 // 选择定时发布
                 options[1].click();
@@ -697,11 +722,42 @@
 
                 // 处理时间
                 const hour = String(publishTime.getHours());
+                const minute = String(publishTime.getMinutes());
 
+                // 设置小时 - inputs[1]
                 if (inputs.length >= 2) {
                     const hourInput = inputs[1]; // 索引 1: 小时
                     if (hourInput) {
                         await triggerReactInput(hourInput, hour);
+                    }
+                }
+
+                // 设置分钟 - inputs[2]
+                if (inputs.length >= 3) {
+                    const minuteInput = inputs[2]; // 索引 2: 分钟
+                    if (minuteInput) {
+                        const currentMinute = parseInt(minuteInput.getAttribute('aria-valuenow')) || 0;
+                        const targetMinute = parseInt(minute) || 0;
+
+                        if (currentMinute !== targetMinute) {
+                            // 使用 React 的方式设置值
+                            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                                window.HTMLInputElement.prototype, 'value'
+                            )?.set;
+
+                            if (nativeInputValueSetter) {
+                                nativeInputValueSetter.call(minuteInput, String(targetMinute));
+                            } else {
+                                minuteInput.value = String(targetMinute);
+                            }
+
+                            // 聚焦并触发事件
+                            minuteInput.focus();
+                            minuteInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            minuteInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            minuteInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                            await sleep(50);
+                        }
                     }
                 }
             }
@@ -726,7 +782,8 @@
     }
 
     // 主处理函数
-    async function handleStartClick() {
+    // mode: 'immediate' = 立即发布模式（默认），'nextDay' = 次日定时模式
+    async function handleStartClick(mode = 'immediate', customDescription = '') {
         // 如果正在运行，直接返回
         if (isProcessing) {
             return;
@@ -742,7 +799,8 @@
         // 设置运行状态
         isProcessing = true;
 
-        showStatus('开始处理...', 2000);
+        const modeText = mode === 'nextDay' ? '次日定时发布' : '立即发布';
+        showStatus(`开始处理（${modeText}模式）...`, 2000);
 
         try {
             // 找到所有待发布的视频列表
@@ -756,22 +814,28 @@
             showStatus(`找到 ${items.length} 个视频，开始处理...`, 2000);
 
             //复制第一行的描述
-            await copyDescription(items);
+            await copyDescription(items, customDescription);
 
             // 逐个处理视频
             for (let i = 0; i < items.length; i++) {
-                await processVideoItem(items[i], i);
+                const success = await processVideoItem(items[i], i, mode);
+                if (!success) {
+                    showStatus(`处理失败，已终止`, 5000);
+                    return;
+                }
             }
 
-            // ====== 发布前验证：检查定时是否全部设置成功（第一个除外） ======
-            const failedItems = verifyAllSchedules(items);
-            if (failedItems.length > 0) {
-                const failedList = failedItems.join('、');
-                const msg = `⚠️ 以下视频的定时可能未设置成功：第 ${failedList} 个。请手动检查后再发布！`;
-                showStatus(msg, 8000);
-                console.warn(`[验证失败] ${msg}`);
-                // 不自动发布，让用户手动确认
-                return;
+            // ====== 发布前验证：检查定时是否全部设置成功（第一个除外，立即发布模式） ======
+            if (mode === 'immediate') {
+                const failedItems = verifyAllSchedules(items);
+                if (failedItems.length > 0) {
+                    const failedList = failedItems.join('、');
+                    const msg = `⚠️ 以下视频的定时可能未设置成功：第 ${failedList} 个。请手动检查后再发布！`;
+                    showStatus(msg, 8000);
+                    console.warn(`[验证失败] ${msg}`);
+                    // 不自动发布，让用户手动确认
+                    return;
+                }
             }
 
             console.log('[验证通过] 所有视频定时设置正确');
@@ -797,8 +861,13 @@
     // 监听来自 popup 的消息（通过 postMessage）
     window.addEventListener('message', (event) => {
         // 只处理来自 popup 的消息
-        if (event.data && event.data.action === 'startProcessing' && event.data.source === 'facebook-schedule-helper-popup') {
-            handleStartClick();
+        if (event.data && event.data.source === 'facebook-schedule-helper-popup') {
+            const customDescription = event.data.customDescription || '';
+            if (event.data.action === 'startProcessing') {
+                handleStartClick('immediate', customDescription);
+            } else if (event.data.action === 'startNextDayProcessing') {
+                handleStartClick('nextDay', customDescription);
+            }
         }
     });
 
