@@ -170,83 +170,70 @@
     async function triggerReactInput(element, value) {
         if (!element) return false;
 
-        // console.log('[triggerReactInput] 开始处理，值:', value);
-
-        // 对于 spinbutton，使用箭头键调整值（支持循环，选择最短路径）
         const currentValue = parseInt(element.getAttribute('aria-valuenow')) || 0;
         const target = parseInt(value) || 0;
 
-        // 获取最大值（从 aria-valuemax，如果没有则默认23，24小时制）
-        let maxValue = parseInt(element.getAttribute('aria-valuemax')) || 23;
+        if (currentValue === target) return true;
 
-        // console.log('[triggerReactInput] Spinbutton: 当前值=', currentValue, '目标值=', target, '最大值=', maxValue);
-
-        if (currentValue === target) {
-            // console.log('[triggerReactInput] 值已正确，无需调整');
-            return true;
-        }
+        const maxValue = parseInt(element.getAttribute('aria-valuemax')) || 23;
 
         // 计算两个方向的步数（考虑循环）
-        // 向上路径（ArrowUp）：向上加
-        let upSteps;
-        if (target > currentValue) {
-            upSteps = target - currentValue; // 直接向上
-        } else {
-            upSteps = (maxValue - currentValue) + target + 1; // 循环：向上到最大值，再循环到目标值
-        }
+        let upSteps = target > currentValue ? target - currentValue : (maxValue - currentValue) + target + 1;
+        let downSteps = target < currentValue ? currentValue - target : currentValue + (maxValue - target) + 1;
 
-        // 向下路径（ArrowDown）：向下减
-        let downSteps;
-        if (target < currentValue) {
-            downSteps = currentValue - target; // 直接向下
-        } else {
-            downSteps = currentValue + (maxValue - target) + 1; // 循环：向下到0，再循环到目标值
-        }
-
-        // 选择步数最少的路径
         const useUp = upSteps <= downSteps;
         const steps = useUp ? upSteps : downSteps;
-        const keyCode = useUp ? 38 : 40; // 38=ArrowUp(向上加), 40=ArrowDown(向下减)
+        const keyCode = useUp ? 38 : 40;
         const keyName = useUp ? 'ArrowUp' : 'ArrowDown';
 
-        // console.log('[triggerReactInput] 向上步数=', upSteps, '向下步数=', downSteps, '选择=', keyName, '步数=', steps);
-
-        // 聚焦输入框
         element.focus();
         await sleep(30);
 
-        // console.log('[triggerReactInput] 将触发', steps, '次', keyName, '键');
-
-        // 循环触发键盘事件（使用最小延迟）
         for (let i = 0; i < steps; i++) {
             element.dispatchEvent(new KeyboardEvent('keydown', {
-                key: keyName,
-                keyCode: keyCode,
-                code: keyName,
-                which: keyCode,
-                bubbles: true,
-                cancelable: true
+                key: keyName, keyCode, code: keyName, which: keyCode,
+                bubbles: true, cancelable: true
             }));
-
             element.dispatchEvent(new KeyboardEvent('keyup', {
-                key: keyName,
-                keyCode: keyCode,
-                code: keyName,
-                which: keyCode,
-                bubbles: true,
-                cancelable: true
+                key: keyName, keyCode, code: keyName, which: keyCode,
+                bubbles: true, cancelable: true
             }));
-
-            // 仅在多步时给 React 一点同步时间，单步不需要
             if (i < steps - 1) await sleep(15);
         }
 
-        // 触发 change 和 blur 事件
         element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
         element.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
-
         return true;
 
+    }
+
+    // 快速设置 spinbutton 的值（直接设值，不逐次按键）
+    async function quickSetSpinbutton(element, value) {
+        if (!element) return false;
+
+        const target = parseInt(value) || 0;
+        const currentValue = parseInt(element.getAttribute('aria-valuenow')) || 0;
+        if (currentValue === target) return true;
+
+        element.focus();
+        await sleep(30);
+
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        )?.set;
+
+        if (nativeInputValueSetter) {
+            nativeInputValueSetter.call(element, String(target));
+        } else {
+            element.value = String(target);
+        }
+
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        element.dispatchEvent(new Event('blur', { bubbles: true }));
+
+        console.log(`[quickSetSpinbutton] 直接设值: ${currentValue} → ${target}`);
+        return true;
     }
 
     // 专门处理日期输入框（可能没有有效的 onChange）
@@ -655,6 +642,8 @@
                 options[0].click();
                 showStatus(`第 1 个视频：设置为立即发布`, 2000);
             } else {
+                // 定时发布（次日模式全部，或立即模式的第2条起）
+
                 // 计算发布时间
                 let publishTime;
                 if (mode === 'nextDay') {
@@ -720,43 +709,17 @@
                     }
                 }
 
-                // 处理时间
+                // 处理时间（只设置小时，分钟使用 Facebook 默认值）
                 const hour = String(publishTime.getHours());
-                const minute = String(publishTime.getMinutes());
 
                 // 设置小时 - inputs[1]
                 if (inputs.length >= 2) {
                     const hourInput = inputs[1]; // 索引 1: 小时
                     if (hourInput) {
-                        await triggerReactInput(hourInput, hour);
-                    }
-                }
-
-                // 设置分钟 - inputs[2]
-                if (inputs.length >= 3) {
-                    const minuteInput = inputs[2]; // 索引 2: 分钟
-                    if (minuteInput) {
-                        const currentMinute = parseInt(minuteInput.getAttribute('aria-valuenow')) || 0;
-                        const targetMinute = parseInt(minute) || 0;
-
-                        if (currentMinute !== targetMinute) {
-                            // 使用 React 的方式设置值
-                            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                                window.HTMLInputElement.prototype, 'value'
-                            )?.set;
-
-                            if (nativeInputValueSetter) {
-                                nativeInputValueSetter.call(minuteInput, String(targetMinute));
-                            } else {
-                                minuteInput.value = String(targetMinute);
-                            }
-
-                            // 聚焦并触发事件
-                            minuteInput.focus();
-                            minuteInput.dispatchEvent(new Event('input', { bubbles: true }));
-                            minuteInput.dispatchEvent(new Event('change', { bubbles: true }));
-                            minuteInput.dispatchEvent(new Event('blur', { bubbles: true }));
-                            await sleep(50);
+                        if (mode === 'nextDay') {
+                            await quickSetSpinbutton(hourInput, hour);
+                        } else {
+                            await triggerReactInput(hourInput, hour);
                         }
                     }
                 }

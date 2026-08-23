@@ -330,8 +330,9 @@ async function getActivationStatus() {
 }
 
 // 开始处理
+// action: 'startProcessing' = 立即发布，'startNextDayProcessing' = 次日定时
 let isProcessing = false;
-async function startProcessing() {
+async function startProcessing(action = 'startProcessing') {
     if (isProcessing) return;
     isProcessing = true;
     try {
@@ -366,68 +367,17 @@ async function startProcessing() {
             target: {
                 tabId: tab.id
             },
-            func: (desc)=>{
-                window.postMessage({ action: 'startProcessing', source: 'facebook-schedule-helper-popup', customDescription: desc}, '*');
+            func: (act, desc)=>{
+                window.postMessage({ action: act, source: 'facebook-schedule-helper-popup', customDescription: desc}, '*');
             },
-            args: [customDescription]
+            args: [action, customDescription]
         });
-        // await chrome.scripting.executeScript({target: { tabId: tab.id }, func: ()=>{window.postMessage({ action: 'startProcessing', source: 'facebook-schedule-helper-popup'}, '*');}});
 
-        showMessage('已开始处理', 'success');
+        const tip = action === 'startNextDayProcessing' ? '已开始次日定时发布处理' : '已开始处理';
+        showMessage(tip, 'success');
 
     } catch (error) {
         console.error('启动处理失败:', error);
-        showMessage('启动失败: ' + error.message, 'error');
-    } finally {
-        isProcessing = false;
-    }
-}
-
-// 次日定时发布处理
-async function startNextDayProcessing() {
-    if (isProcessing) return;
-    isProcessing = true;
-    try {
-        // 检查激活状态
-        const status = await getActivationStatus();
-        if (!status.isActive) {
-            showMessage('请先激活插件', 'error');
-            return;
-        }
-
-        // 获取当前活动标签页
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-        if (!tab) {
-            showMessage('无法获取当前标签页', 'error');
-            return;
-        }
-
-        // 检查是否在正确的页面
-        if (!tab.url || !tab.url.includes('business.facebook.com/latest/bulk_upload_composer')) {
-            showMessage('请在 Facebook 批量上传页面使用此功能', 'error');
-            return;
-        }
-
-        // 获取自定义描述
-        const customDescriptionInput = document.getElementById('customDescriptionInput');
-        const customDescription = customDescriptionInput?.value?.trim() || '';
-
-        // 使用 executeScript 发送 postMessage 启动次日定时处理
-        await chrome.scripting.executeScript({
-            target: {
-                tabId: tab.id
-            },
-            func: (desc)=>{
-                window.postMessage({ action: 'startNextDayProcessing', source: 'facebook-schedule-helper-popup', customDescription: desc}, '*');
-            },
-            args: [customDescription]
-        });
-
-        showMessage('已开始次日定时发布处理', 'success');
-
-    } catch (error) {
-        console.error('启动次日定时处理失败:', error);
         showMessage('启动失败: ' + error.message, 'error');
     } finally {
         isProcessing = false;
@@ -481,13 +431,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // 开始按钮（只在已激活时显示）
     const startBtn = document.getElementById('startBtn');
     if (startBtn) {
-        startBtn.addEventListener('click', startProcessing);
+        startBtn.addEventListener('click', () => startProcessing('startProcessing'));
     }
 
     // 次日定时发布按钮
     const nextDayBtn = document.getElementById('nextDayBtn');
     if (nextDayBtn) {
-        nextDayBtn.addEventListener('click', startNextDayProcessing);
+        nextDayBtn.addEventListener('click', () => startProcessing('startNextDayProcessing'));
     }
 
     // 支持回车键激活
