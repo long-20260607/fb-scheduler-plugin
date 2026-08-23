@@ -398,7 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const textarea = document.getElementById('customDescriptionInput');
     if (textarea) {
         // 从缓存恢复内容
-        chrome.storage.local.get(['cachedCustomDescription'], (result) => {
+        chrome.storage.session.get(['cachedCustomDescription'], (result) => {
             if (result.cachedCustomDescription) {
                 textarea.value = result.cachedCustomDescription;
                 // 触发 input 事件以调整高度
@@ -414,7 +414,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 防抖保存
             if (saveTimeout) clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
-                chrome.storage.local.set({ cachedCustomDescription: this.value });
+                chrome.storage.session.set({ cachedCustomDescription: this.value });
             }, 500);
 
             // 重置高度为 auto 以获取正确的 scrollHeight
