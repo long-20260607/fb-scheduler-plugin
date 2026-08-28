@@ -471,7 +471,7 @@
     async function copyDescription(items, customDescription = ''){
 
         // 如果有自定义描述，直接使用
-        let description = customDescription || null;
+        let description = (customDescription || '').trim() || null;
 
         // 如果没有自定义描述，从第一行获取
         if (!description) {
@@ -482,8 +482,8 @@
             for (let retry = 0; retry < maxRetries; retry++) {
                 try {
                     let textElement = items[0]?.querySelector('[role="textbox"]');
-                    if (textElement && textElement.innerText) {
-                        description = textElement.innerText;
+                    if (textElement && textElement.innerText?.trim()) {
+                        description = textElement.innerText.trim();
                         break;
                     }
                 } catch (err) {
@@ -497,8 +497,8 @@
         }
 
         if(!description){
-            console.log('[copyDescription] 无法获取描述文本，跳过复制');
-            return;
+            console.log('[copyDescription] 无法获取描述文本，脚本终止');
+            return false;
         }
 
         console.log('[copyDescription] 找到描述文本:', description);
@@ -658,13 +658,6 @@
                     publishTime = new Date(Date.now() + index * 60 * 60 * 1000);
                 }
 
-                // 检查发布时间是否满足 Facebook 的 20 分钟要求
-                const minPublishTime = new Date(Date.now() + 20 * 60 * 1000);
-                if (publishTime < minPublishTime) {
-                    const timeStr = `${publishTime.getMonth() + 1}/${publishTime.getDate()} ${publishTime.getHours()}:${String(publishTime.getMinutes()).padStart(2, '0')}`;
-                    throw new Error(`第 ${index + 1} 个视频的发布时间 ${timeStr} 不满足 Facebook 的 20 分钟要求，已终止`);
-                }
-
                 // 选择定时发布
                 options[1].click();
 
@@ -777,7 +770,11 @@
             showStatus(`找到 ${items.length} 个视频，开始处理...`, 2000);
 
             //复制第一行的描述
-            await copyDescription(items, customDescription);
+            const descResult = await copyDescription(items, customDescription);
+            if (descResult === false) {
+                showStatus('无法获取描述文本，脚本终止', 5000);
+                return;
+            }
 
             // 逐个处理视频
             for (let i = 0; i < items.length; i++) {
