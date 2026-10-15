@@ -137,6 +137,161 @@
         .footer-value {
             color: #666;
         }
+        /* 多标签启动间隔输入 */
+        .stagger-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 15px;
+        }
+        .stagger-row label {
+            font-size: 12px;
+            color: #666;
+            white-space: nowrap;
+        }
+        .stagger-row input {
+            width: 70px;
+            padding: 6px 8px;
+            border: 1px solid #d9d9d9;
+            border-radius: 4px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        .stagger-row input:focus {
+            outline: none;
+            border-color: #1890ff;
+        }
+        .stagger-tip {
+            font-size: 11px;
+            color: #999;
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+        /* 多标签运行状态面板 */
+        #runPanel {
+            display: none;
+            margin-bottom: 20px;
+        }
+        .run-panel-title {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .run-reset {
+            font-size: 11px;
+            color: #1890ff;
+            cursor: pointer;
+            border: none;
+            background: none;
+            padding: 0;
+            flex: none;
+        }
+        .run-item {
+            padding: 8px 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }
+        .run-item-head {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .run-title {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #333;
+            font-weight: 500;
+        }
+        .run-status {
+            color: #1890ff;
+            white-space: nowrap;
+        }
+        .run-message {
+            color: #999;
+            font-size: 11px;
+            margin-top: 2px;
+            word-break: break-all;
+        }
+        .run-done .run-status { color: #52c41a; }
+        .run-error .run-status { color: #f5222d; }
+        /* 确认弹层 */
+        .confirm-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.45);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .confirm-box {
+            background: #fff;
+            border-radius: 8px;
+            width: 320px;
+            max-width: 92%;
+            max-height: 85%;
+            display: flex;
+            flex-direction: column;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+        .confirm-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .confirm-desc {
+            font-size: 12px;
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+        .confirm-list {
+            overflow-y: auto;
+            flex: 1;
+            margin-bottom: 12px;
+            border: 1px solid #f0f0f0;
+            border-radius: 4px;
+        }
+        .confirm-tab {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 8px;
+            font-size: 12px;
+            color: #333;
+            border-bottom: 1px solid #f5f5f5;
+            cursor: pointer;
+        }
+        .confirm-tab:last-child {
+            border-bottom: none;
+        }
+        .confirm-tab-title {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .confirm-tab-flag {
+            color: #fa8c16;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .confirm-tab-warn {
+            opacity: 0.75;
+        }
+        .confirm-actions {
+            display: flex;
+            gap: 10px;
+        }
     </style>
 </head>
 <body>
@@ -165,6 +320,20 @@
         <div class="input-group" style="margin-top: 15px;">
             <label>自定义描述（可选）</label>
             <textarea id="customDescriptionInput" rows="1" placeholder="留空则复制第一行描述到其他行" style="width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; box-sizing: border-box; resize: none; overflow-y: auto; min-height: 36px; max-height: 120px;"></textarea>
+        </div>
+        <div class="stagger-row">
+            <label for="staggerInput">标签启动间隔</label>
+            <input type="number" id="staggerInput" min="0" max="600" value="5">
+            <span style="font-size: 12px; color: #666;">秒</span>
+        </div>
+        <div class="stagger-tip">多标签执行时，各标签按此间隔错峰启动，降低风控与卡顿。仅执行 1 个标签时无影响。</div>
+
+        <div id="runPanel">
+            <div class="run-panel-title">
+                <span>多标签运行状态</span>
+                <button class="run-reset" id="runResetBtn">清除记录</button>
+            </div>
+            <div id="runList"></div>
         </div>
     </div>
 

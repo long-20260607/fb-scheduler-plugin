@@ -329,7 +329,49 @@ async function getActivationStatus() {
     }
 }
 
-// 开始处理
+// ===== 多标签执行 =====
+
+// 默认标签启动间隔（秒）
+const DEFAULT_STAGGER_SECONDS = 5;
+
+// 与 background 通信（兼容不支持 Promise 的 chrome.runtime.sendMessage）
+function sendBgMessage(msg) {
+    return new Promise((resolve, reject) => {
+        try {
+            const ret = chrome.runtime.sendMessage(msg, (resp) => {
+                const err = chrome.runtime.lastError;
+                if (err) reject(new Error(err.message));
+                else resolve(resp);
+            });
+            // 新版 Chrome 同时返回 Promise，任一路径先到达即可
+            if (ret && typeof ret.then === 'function') {
+                ret.then(resolve, reject);
+            }
+        } catch (e) {
+            reject(e);
+        }
+    });
+}
+
+// HTML 转义（标签标题来自页面，防止注入）
+function escapeHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// 读取用户设置的错峰间隔（毫秒）
+function getStaggerMs() {
+    const input = document.getElementById('staggerInput');
+    let seconds = parseInt(input && input.value, 10);
+    if (isNaN(seconds) || seconds < 0) seconds = DEFAULT_STAGGER_SECONDS;
+    return seconds * 1000;
+}
+
+// 开始处理：探测所有批量上传标签 → 二次确认 → 通知 background 编排
 // action: 'startProcessing' = 立即发布，'startNextDayProcessing' = 次日定时
 let isProcessing = false;
 async function startProcessing(action = 'startProcessing') {
@@ -343,38 +385,40 @@ async function startProcessing(action = 'startProcessing') {
             return;
         }
 
-        // 获取当前活动标签页
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-        if (!tab) {
-            showMessage('无法获取当前标签页', 'error');
+        // 探测当前所有「批量上传」标签页及其就绪状态
+        let tabs = [];
+        try {
+            tabs = await sendBgMessage({ type: 'probe-tabs' });
+        } catch (e) {
+            tabs = [];
+        }
+        if (!tabs || tabs.length === 0) {
+            showMessage('未找到批量上传页面标签，请先打开 Facebook 批量上传页面', 'error');
             return;
         }
 
-        // 检查是否在正确的页面
-        if (!tab.url || !tab.url.includes('business.facebook.com/latest/bulk_upload_composer')) {
-            showMessage('请在 Facebook 批量上传页面使用此功能', 'error');
-            return;
-        }
+        // 弹确认框列出将执行的标签（发布不可撤销，必须二次确认）
+        const selectedIds = await showStartConfirm(tabs, action);
+        if (!selectedIds) return;
 
-        // 获取自定义描述
+        // 获取自定义描述（多标签共用同一份）
         const customDescriptionInput = document.getElementById('customDescriptionInput');
         const customDescription = customDescriptionInput?.value?.trim() || '';
 
-        // 使用 executeScript 发送 postMessage 启动处理
-        // javascript-obfuscator:disable
-        await chrome.scripting.executeScript({
-            target: {
-                tabId: tab.id
-            },
-            func: (act, desc)=>{
-                window.postMessage({ action: act, source: 'facebook-schedule-helper-popup', customDescription: desc}, '*');
-            },
-            args: [action, customDescription]
+        const resp = await sendBgMessage({
+            type: 'start-multi',
+            action: action,
+            customDescription: customDescription,
+            staggerMs: getStaggerMs(),
+            tabIds: selectedIds
         });
 
-        const tip = action === 'startNextDayProcessing' ? '已开始次日定时发布处理' : '已开始处理';
-        showMessage(tip, 'success');
+        if (resp && resp.ok) {
+            showMessage(`已向 ${selectedIds.length} 个标签发送启动指令`, 'success');
+            renderRunPanel(await sendBgMessage({ type: 'get-run-state' }));
+        } else {
+            showMessage('启动失败: ' + ((resp && resp.error) || '未知错误'), 'error');
+        }
 
     } catch (error) {
         console.error('启动处理失败:', error);
@@ -384,15 +428,125 @@ async function startProcessing(action = 'startProcessing') {
     }
 }
 
+// 启动确认弹层：返回勾选的 tabId 数组，取消返回 null
+function showStartConfirm(tabs, action) {
+    return new Promise(resolve => {
+        const modeText = action === 'startNextDayProcessing' ? '次日定时发布' : '立即发布';
+        const readyCount = tabs.filter(t => t.ready).length;
 
-function sendMesageToMain(){
-     // 发送 postMessage 到 content script
+        const listHtml = tabs.map(t => `
+            <label class="confirm-tab ${t.ready ? '' : 'confirm-tab-warn'}">
+                <input type="checkbox" value="${t.id}" ${t.ready ? 'checked' : ''}>
+                <span class="confirm-tab-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+                ${t.ready ? '' : '<span class="confirm-tab-flag">未就绪</span>'}
+            </label>`).join('');
 
+        const overlay = document.createElement('div');
+        overlay.className = 'confirm-overlay';
+        overlay.innerHTML = `
+            <div class="confirm-box">
+                <div class="confirm-title">确认执行（${modeText}）</div>
+                <div class="confirm-desc">将在以下 <b>${tabs.length}</b> 个标签页中执行（已就绪 ${readyCount} 个）。发布后不可撤销，请确认各标签属于不同主页。</div>
+                <div class="confirm-list">${listHtml}</div>
+                <div class="confirm-actions">
+                    <button class="btn-secondary" data-act="cancel">取消</button>
+                    <button class="btn-primary" data-act="ok">确认执行</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const close = (val) => { overlay.remove(); resolve(val); };
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) { close(null); return; }
+            const act = e.target && e.target.getAttribute && e.target.getAttribute('data-act');
+            if (act === 'cancel') close(null);
+            if (act === 'ok') {
+                const ids = Array.from(overlay.querySelectorAll('input[type="checkbox"]:checked'))
+                    .map(cb => parseInt(cb.value, 10));
+                close(ids.length > 0 ? ids : null);
+            }
+        });
+    });
 }
+
+// 运行状态文案
+function runStatusText(s) {
+    switch (s) {
+        case 'pending': return '等待启动';
+        case 'launched': return '已启动';
+        case 'waiting': return '错峰等待';
+        case 'processing': return '处理中';
+        case 'progress': return '进行中';
+        case 'done': return '已完成';
+        case 'error': return '失败';
+        default: return s || '-';
+    }
+}
+
+// 渲染多标签运行状态面板
+function renderRunPanel(state) {
+    const panel = document.getElementById('runPanel');
+    const list = document.getElementById('runList');
+    if (!panel || !list) return;
+    if (!state || !state.tabs || Object.keys(state.tabs).length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+    panel.style.display = 'block';
+    const entries = Object.keys(state.tabs).map(k => state.tabs[k]);
+    list.innerHTML = entries.map(t => {
+        const icon = t.status === 'done' ? '✅' : (t.status === 'error' ? '❌' : '⏳');
+        const progress = (t.status === 'progress' && t.total) ? `（${t.index}/${t.total}）` : '';
+        return `<div class="run-item run-${escapeHtml(t.status || '')}">
+            <div class="run-item-head">
+                <span>${icon}</span>
+                <span class="run-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+                <span class="run-status">${runStatusText(t.status)}${progress}</span>
+            </div>
+            <div class="run-message">${escapeHtml(t.message || '')}</div>
+        </div>`;
+    }).join('');
+}
+
+// 接收 background 推送的运行状态更新
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === 'run-state-update') {
+        renderRunPanel(msg.state);
+    }
+});
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
     loadActiveStatus();
+
+    // 恢复错峰间隔设置
+    const staggerInput = document.getElementById('staggerInput');
+    if (staggerInput) {
+        chrome.storage.local.get(['staggerSeconds'], (result) => {
+            if (typeof result.staggerSeconds === 'number') {
+                staggerInput.value = result.staggerSeconds;
+            }
+        });
+        staggerInput.addEventListener('change', () => {
+            const v = parseInt(staggerInput.value, 10);
+            chrome.storage.local.set({ staggerSeconds: isNaN(v) ? DEFAULT_STAGGER_SECONDS : v });
+        });
+    }
+
+    // 加载上次多标签运行状态
+    sendBgMessage({ type: 'get-run-state' })
+        .then(renderRunPanel)
+        .catch(() => {});
+
+    // 清除运行记录
+    const runResetBtn = document.getElementById('runResetBtn');
+    if (runResetBtn) {
+        runResetBtn.addEventListener('click', () => {
+            sendBgMessage({ type: 'reset-run-state' })
+                .then(() => renderRunPanel(null))
+                .catch(() => {});
+        });
+    }
 
     // 自定义描述 textarea 自动高度调整
     const textarea = document.getElementById('customDescriptionInput');

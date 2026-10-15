@@ -13,6 +13,8 @@ const OUTPUT_FILE = path.join(OUTPUT_DIR, `${PLUGIN_NAME}-${timestamp}.zip`);
 
 // 需要打包的文件
 const FILES = [
+    'background.js',
+    'bridge.js',
     'content.css',
     'content.js',
     'logo.png',

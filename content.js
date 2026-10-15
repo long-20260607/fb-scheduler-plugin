@@ -5,6 +5,8 @@
 
     // 运行状态标志
     let isProcessing = false;
+    // 错峰等待中的标志（延迟启动期间也要防止重复触发）
+    let pendingRun = false;
 
     // 创建悬浮按钮
     function createFloatingButton() {
@@ -164,6 +166,22 @@
         setTimeout(() => {
             status.classList.remove('show');
         }, duration);
+    }
+
+    // 向 background 上报处理状态（经 bridge.js 转发，供 popup 展示多标签进度）
+    // status: waiting | processing | progress | done | error
+    function reportStatus(status, message, extra) {
+        try {
+            window.postMessage(Object.assign({
+                source: 'fb-scheduler-main',
+                type: 'status-report',
+                status: status,
+                message: message,
+                ts: Date.now()
+            }, extra || {}), '*');
+        } catch (e) {
+            // 环境异常时不影响主流程
+        }
     }
 
     // 触发 React 输入事件 - 使用箭头键调整 spinbutton 值（参考 v1.0 的实现）
@@ -365,8 +383,43 @@
     }
 
     // 等待一小段时间
+    // 注意：不能用裸 setTimeout——后台不可见标签页会被 Chrome 节流
+    // （隐藏超过 5 分钟后定时器每分钟才触发一次），导致流程卡死。
+    // 这里对短延时（<=1000ms）使用 MessageChannel 消息循环：
+    // postMessage 产生的消息任务不受定时器节流约束，且每一轮都是独立任务，
+    // 事件循环可以正常穿插执行 React 渲染 / MutationObserver 等回调。
     function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+        return new Promise(resolve => {
+            if (ms > 1000) {
+                // 长延时（如错峰启动）对精度要求低，直接用 setTimeout；
+                // 即使被节流到分钟级，也只是晚点启动，不会卡死。
+                setTimeout(resolve, ms);
+                return;
+            }
+            if (typeof MessageChannel === 'undefined') {
+                setTimeout(resolve, ms); // 极老环境兜底
+                return;
+            }
+            const channel = new MessageChannel();
+            const start = Date.now();
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                try { channel.port1.close(); channel.port2.close(); } catch (e) {}
+                resolve();
+            };
+            channel.port1.onmessage = () => {
+                if (Date.now() - start >= ms) {
+                    finish();
+                } else {
+                    channel.port2.postMessage(null); // 继续下一轮
+                }
+            };
+            // 兜底：万一消息任务被挂起，定时器最终也能唤醒
+            setTimeout(finish, ms + 2000);
+            channel.port2.postMessage(null);
+        });
     }
 
     // 等待元素从 popup 中出现（比 waitForElement 更快，直接在容器内查找）
@@ -737,6 +790,25 @@
         }
     }
 
+    // 带错峰延迟的启动入口（供 popup / background 多标签模式调用）
+    // startDelayMs: 启动前等待的毫秒数，用于把多个标签的启动时间岔开
+    async function startWithDelay(mode, customDescription, startDelayMs) {
+        if (isProcessing || pendingRun) {
+            reportStatus('error', '已有任务在进行中，已忽略本次启动');
+            return;
+        }
+        pendingRun = true;
+        try {
+            if (startDelayMs && startDelayMs > 0) {
+                reportStatus('waiting', `错峰等待中（${Math.round(startDelayMs / 1000)} 秒后启动）`);
+                await sleep(startDelayMs);
+            }
+            await handleStartClick(mode, customDescription);
+        } finally {
+            pendingRun = false;
+        }
+    }
+
     // 主处理函数
     // mode: 'immediate' = 立即发布模式（默认），'nextDay' = 次日定时模式
     async function handleStartClick(mode = 'immediate', customDescription = '') {
@@ -757,6 +829,7 @@
 
         const modeText = mode === 'nextDay' ? '次日定时发布' : '立即发布';
         showStatus(`开始处理（${modeText}模式）...`, 2000);
+        reportStatus('processing', `开始处理（${modeText}模式）...`);
 
         try {
             // 找到所有待发布的视频列表
@@ -764,23 +837,28 @@
 
             if (items.length === 0) {
                 showStatus('未找到待发布的视频', 3000);
+                reportStatus('error', '未找到待发布的视频');
                 return;
             }
 
             showStatus(`找到 ${items.length} 个视频，开始处理...`, 2000);
+            reportStatus('processing', `找到 ${items.length} 个视频，开始处理...`, { index: 0, total: items.length });
 
             //复制第一行的描述
             const descResult = await copyDescription(items, customDescription);
             if (descResult === false) {
                 showStatus('无法获取描述文本，脚本终止', 5000);
+                reportStatus('error', '无法获取描述文本，脚本终止');
                 return;
             }
 
             // 逐个处理视频
             for (let i = 0; i < items.length; i++) {
+                reportStatus('progress', `正在处理第 ${i + 1}/${items.length} 个视频`, { index: i + 1, total: items.length });
                 const success = await processVideoItem(items[i], i, mode);
                 if (!success) {
                     showStatus(`处理失败，已终止`, 5000);
+                    reportStatus('error', `第 ${i + 1} 个视频处理失败，已终止`, { index: i + 1, total: items.length });
                     return;
                 }
             }
@@ -793,6 +871,7 @@
                     const msg = `⚠️ 以下视频的定时可能未设置成功：第 ${failedList} 个。请手动检查后再发布！`;
                     showStatus(msg, 8000);
                     console.warn(`[验证失败] ${msg}`);
+                    reportStatus('error', msg, { index: 0, total: items.length });
                     // 不自动发布，让用户手动确认
                     return;
                 }
@@ -808,28 +887,41 @@
                 publishBtn.click();
             }
             showStatus(`完成！已处理 ${items.length} 个视频`, 5000);
+            reportStatus('done', `完成！已处理 ${items.length} 个视频`, { index: items.length, total: items.length });
 
         } catch (error) {
             console.error('处理过程中出错:', error);
             showStatus(`处理失败: ${error.message}`, 5000);
+            reportStatus('error', `处理过程中出错: ${error.message}`);
         } finally {
             // 清除运行状态（运行完成或报错中断后都设置为 false）
             isProcessing = false;
         }
     }
 
-    // 监听来自 popup 的消息（通过 postMessage）
+    // 监听来自 popup / background 的消息（通过 postMessage）
     window.addEventListener('message', (event) => {
-        // 只处理来自 popup 的消息
+        // 只处理来自扩展的启动消息
         if (event.data && event.data.source === 'facebook-schedule-helper-popup') {
             const customDescription = event.data.customDescription || '';
+            const startDelay = parseInt(event.data.startDelay, 10) || 0;
             if (event.data.action === 'startProcessing') {
-                handleStartClick('immediate', customDescription);
+                startWithDelay('immediate', customDescription, startDelay);
             } else if (event.data.action === 'startNextDayProcessing') {
-                handleStartClick('nextDay', customDescription);
+                startWithDelay('nextDay', customDescription, startDelay);
             }
         }
     });
+
+    // 标记主世界内容脚本已就绪（DOM 属性可跨 world 读取，供 background 探测）
+    try {
+        document.documentElement.setAttribute('data-fb-scheduler-ready', '1');
+    } catch (e) {}
+
+    // 上报就绪（经 bridge.js 转发给 background）
+    try {
+        window.postMessage({ source: 'fb-scheduler-main', type: 'main-ready' }, '*');
+    } catch (e) {}
 
 })();
 
